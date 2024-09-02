@@ -38,7 +38,7 @@ def add_seal_to_pdf(pdf_path, seal_path, output_pdf_path):
     seal_width, seal_height = seal_img.size
 
     # Set seal position (example position, you can adjust this)
-    seal_position = (500, 100)  # (x, y) coordinates
+    seal_position = (250, 150)  # (x, y) coordinates
 
     for i in range(len(reader.pages)):
         page = reader.pages[i]
