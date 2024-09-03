@@ -1,69 +1,67 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
-from PyPDF2 import PdfReader, PdfWriter
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
+from fastapi.middleware.cors import CORSMiddleware
+from process_pdf import add_stamps_and_signature
+import fitz  
 from PIL import Image
-
+import json
 import os
+import uuid
+
 
 app = FastAPI()
 
-UPLOAD_DIR = "./uploads/"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust according to your security requirements
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.post("/upload/")
-async def upload_pdf_and_seal(pdf: UploadFile = File(...), seal: UploadFile = File(...)):
-    # Save uploaded files
-    pdf_path = os.path.join(UPLOAD_DIR, pdf.filename)
-    seal_path = os.path.join(UPLOAD_DIR, "seals", seal.filename)
+# Directories
+STAMPS_DIR = "./stamps/"
+SIGNATURES_DIR = "./uploads/signatures/"
+OUTPUT_DIR = "./uploads/output/"
 
+# Ensure directories exist
+os.makedirs(STAMPS_DIR, exist_ok=True)
+os.makedirs(SIGNATURES_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+with open("placement_config.json", "r") as config_file:
+    placement_config = json.load(config_file)
+
+
+@app.post("/process_pdf/")
+async def process_pdf(pdf: UploadFile = File(...), signature: UploadFile = File(...)):
+    if pdf.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Uploaded file is not a PDF.")
+    if signature.content_type not in ["image/png", "image/jpeg"]:
+        raise HTTPException(status_code=400, detail="Signature must be an image (PNG or JPEG).")
+    
+    # Save uploaded files temporarily
+    pdf_id = str(uuid.uuid4())
+    pdf_path = os.path.join(OUTPUT_DIR, f"{pdf_id}_{pdf.filename}")
+    signature_path = os.path.join(SIGNATURES_DIR, f"{pdf_id}_{signature.filename}")
+    
     with open(pdf_path, "wb") as pdf_file:
         pdf_file.write(await pdf.read())
+    
+    with open(signature_path, "wb") as sig_file:
+        sig_file.write(await signature.read())
+    
+    # Process the PDF
+    output_pdf_path = os.path.join(OUTPUT_DIR, f"processed_{pdf_id}_{pdf.filename}")
+    try:
+        add_stamps_and_signature(pdf_path, signature_path, output_pdf_path, placement_config)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing PDF: {e}")
+    finally:
+        # Clean up temporary files
+        os.remove(pdf_path)
+        os.remove(signature_path)
+    
+    return FileResponse(output_pdf_path, filename=f"processed_{pdf.filename}", media_type='application/pdf')
 
-    with open(seal_path, "wb") as seal_file:
-        seal_file.write(await seal.read())
 
-    output_pdf_path = os.path.join(UPLOAD_DIR, "outputs", "stamped_" + pdf.filename)
-    add_seal_to_pdf(pdf_path, seal_path, output_pdf_path)
-
-    return FileResponse(output_pdf_path, filename="stamped_" + pdf.filename)
-
-def add_seal_to_pdf(pdf_path, seal_path, output_pdf_path):
-    # Open the existing PDF
-    reader = PdfReader(pdf_path)
-    writer = PdfWriter()
-
-    # Load the seal image
-    seal_img = Image.open(seal_path)
-    seal_width, seal_height = seal_img.size
-
-    # Set seal position (example position, you can adjust this)
-    seal_position = (250, 150)  # (x, y) coordinates
-
-    for i in range(len(reader.pages)):
-        page = reader.pages[i]
-
-        # Create a new PDF with the seal
-        packet = create_seal_pdf(seal_path, seal_position, page.mediabox.upper_right)
-
-        # Merge the seal PDF with the original page
-        page.merge_page(PdfReader(packet).pages[0])
-
-        writer.add_page(page)
-
-    # Write the output PDF
-    with open(output_pdf_path, "wb") as output_pdf:
-        writer.write(output_pdf)
-
-def create_seal_pdf(seal_path, seal_position, page_size):
-    packet = os.path.join(UPLOAD_DIR, "temp_seal.pdf")
-
-    c = canvas.Canvas(packet, pagesize=page_size)
-    c.drawImage(seal_path, *seal_position, width=100, height=100, mask='auto')
-    c.save()
-
-    return packet
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
