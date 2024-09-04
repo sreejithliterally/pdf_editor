@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from process_pdf import add_stamps_and_signature
@@ -13,7 +13,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust according to your security requirements
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,7 +34,7 @@ with open("placement_config.json", "r") as config_file:
 
 
 @app.post("/process_pdf/")
-async def process_pdf(pdf: UploadFile = File(...), signature: UploadFile = File(...)):
+async def process_pdf(pdf: UploadFile = File(...), signature: UploadFile = File(...),finance_company: str = Form(...)):
     if pdf.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Uploaded file is not a PDF.")
     if signature.content_type not in ["image/png", "image/jpeg"]:
@@ -54,7 +54,7 @@ async def process_pdf(pdf: UploadFile = File(...), signature: UploadFile = File(
     # Process the PDF
     output_pdf_path = os.path.join(OUTPUT_DIR, f"processed_{pdf_id}_{pdf.filename}")
     try:
-        add_stamps_and_signature(pdf_path, signature_path, output_pdf_path, placement_config)
+        add_stamps_and_signature(pdf_path, signature_path, output_pdf_path, placement_config, finance_company)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {e}")
     finally:
